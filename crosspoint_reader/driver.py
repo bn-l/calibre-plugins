@@ -93,6 +93,26 @@ class CrossPointDevice(DeviceConfig, DevicePlugin):
             self._log('[CrossPoint] discovery failed')
         return None
 
+    def debug_managed_device_detection(self, devices_on_system, output):
+        from functools import partial
+        p = partial(print, file=output)
+        if self.is_connected:
+            p(f'A CrossPoint Reader is already connected at {self.device_host}:{self.device_port}')
+            return True
+        p('Looking for a CrossPoint Reader on the network...')
+        try:
+            # Bypass the discovery throttle so a fresh scan happens.
+            self.last_discovery = 0.0
+            dev = self.detect_managed_devices(devices_on_system, force_refresh=True)
+        except Exception as exc:
+            p(f'Error while probing for a CrossPoint Reader: {exc}')
+            return False
+        if dev is not None:
+            p(f'Found a CrossPoint Reader at {self.device_host}:{self.device_port}')
+            return True
+        p('No CrossPoint Reader detected on the network')
+        return False
+
     def _detect_device_model(self):
         """Query /api/status for the device model (X3/X4), like the web UI."""
         try:
