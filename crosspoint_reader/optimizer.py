@@ -7,8 +7,12 @@ the device's web UI when no manual per-image splitting is selected:
     * resolve a device profile (X4 = 480x800, X3 = 528x792, portrait short x long)
     * for every raster image inside the EPUB:
         - optional auto-crop of uniform margins
-        - scale to fit the device screen (preserving aspect ratio)
-        - flatten transparency onto white and convert to grayscale
+        - optional rotate landscape images to match the portrait screen
+        - scale to the device screen ('fit'/contain or 'fill'/cover), upscaling
+          small images by default so illustrations fill the panel
+        - flatten transparency onto white and convert to grayscale (ITU-R 601
+          luminance, or HSL lightness for brighter colour covers) with an
+          optional gamma lift
         - re-encode as JPEG (quality 85 by default)
     * rewrite the container: rename raster images to ``.jpg``, strip stale
       width/height from ``<img>`` tags, unwrap SVG covers / SVG-wrapped images,
@@ -80,13 +84,26 @@ def resolve_profile(device_target, detected_device):
 
 class Options(object):
     def __init__(self, quality=DEFAULT_JPEG_QUALITY, grayscale=True, auto_crop=False,
-                 split_text=True):
+                 split_text=True, enlarge=True, rotate_landscape=True,
+                 fill_mode='fit', grayscale_mode='lightness', brighten=0):
         self.quality = int(quality)
         self.grayscale = bool(grayscale)
         self.auto_crop = bool(auto_crop)
         # Split oversized paragraphs/chapters and strip fonts for the
         # low-RAM firmware layout engine (see textsplit.py).
         self.split_text = bool(split_text)
+        # Geometry: upscale small images to the screen, rotate landscape images
+        # to match the portrait panel, and either 'fit' (contain, may letterbox)
+        # or 'fill' (cover, centre-crop the overflow) the screen box.
+        self.enlarge = bool(enlarge)
+        self.rotate_landscape = bool(rotate_landscape)
+        self.fill_mode = fill_mode if fill_mode in ('fit', 'fill') else 'fit'
+        # Grayscale mapping: 'luma' = ITU-R 601 (accurate luminance, matches the
+        # web UI); 'lightness' = HSL lightness (max+min)/2, which keeps saturated
+        # colours (red/blue covers) from collapsing to very dark greys on the
+        # 4-level e-ink panel. 'brighten' is an extra 0..100 gamma lift.
+        self.grayscale_mode = grayscale_mode if grayscale_mode in ('luma', 'lightness') else 'luma'
+        self.brighten = max(0, min(100, int(brighten)))
 
 
 # ---------------------------------------------------------------------------
@@ -188,6 +205,34 @@ def _should_skip_auto_crop(image_path, w, h):
     return bool(_COVER_NAME_RE.search(image_path or ''))
 
 
+def _to_grayscale(rgb, mode):
+    """Convert an RGB image to a single-channel 'L' image.
+
+    'luma' uses PIL's ITU-R 601 weights (0.299/0.587/0.114) — accurate
+    luminance, but saturated red/blue collapse to dark greys (red -> 76/255).
+    'lightness' uses HSL lightness, (max(R,G,B) + min(R,G,B)) / 2, so a pure
+    red maps to ~127 instead of 76 and colourful covers stay legible on the
+    4-level panel. For already-desaturated images the two are equivalent.
+    """
+    if mode == 'lightness':
+        from PIL import ImageChops
+        r, g, b = rgb.split()
+        mx = ImageChops.lighter(ImageChops.lighter(r, g), b)
+        mn = ImageChops.darker(ImageChops.darker(r, g), b)
+        return ImageChops.add(mx, mn, scale=2.0)  # (max + min) / 2
+    return rgb.convert('L')
+
+
+def _apply_brighten(im_l, amount):
+    """Lift shadows/midtones with a gamma curve. amount 0..100 -> gamma 1.0..2.2."""
+    if amount <= 0:
+        return im_l
+    gamma = 1.0 + (min(100, int(amount)) / 100.0) * 1.2
+    inv = 1.0 / gamma
+    lut = [min(255, int(round((i / 255.0) ** inv * 255.0))) for i in range(256)]
+    return im_l.point(lut)
+
+
 def process_image(data, profile, opts, image_path=''):
     """Run the core optimization on a single image.
 
@@ -214,23 +259,38 @@ def process_image(data, profile, opts, image_path=''):
             src_w, src_h = src.size
             cropped = True
 
-    # --- scale to fit (preserve aspect ratio) -------------------------------
-    fits = src_w <= max_w and src_h <= max_h
-    if fits and not cropped:
+    # --- optional rotate landscape to match the portrait screen -------------
+    rotated = False
+    if opts.rotate_landscape and src_w > src_h and max_w < max_h:
+        src = src.rotate(90, expand=True)
+        src_w, src_h = src.size
+        rotated = True
+
+    # --- scale: 'fit' = contain, 'fill' = cover; optional upscaling ---------
+    scale_fit = min(max_w / float(src_w), max_h / float(src_h))
+    scale = max(max_w / float(src_w), max_h / float(src_h)) if opts.fill_mode == 'fill' else scale_fit
+    if not opts.enlarge:
+        scale = min(scale, 1.0)  # never grow, only shrink oversized images
+    final_w = max(1, int(round(src_w * scale)))
+    final_h = max(1, int(round(src_h * scale)))
+    if (final_w, final_h) == (src_w, src_h):
         scaled = src
-        final_w, final_h = src_w, src_h
     else:
-        scale = min(max_w / float(src_w), max_h / float(src_h))
-        final_w = max(1, int(round(src_w * scale)))
-        final_h = max(1, int(round(src_h * scale)))
-        if (final_w, final_h) == (src_w, src_h):
-            scaled = src
-        else:
-            scaled = src.resize((final_w, final_h), Image.LANCZOS)
+        scaled = src.resize((final_w, final_h), Image.LANCZOS)
+
+    # --- fill mode: centre-crop the overflow to the exact screen box --------
+    if opts.fill_mode == 'fill' and (final_w > max_w or final_h > max_h):
+        left = max(0, (final_w - max_w) // 2)
+        top = max(0, (final_h - max_h) // 2)
+        scaled = scaled.crop((left, top, left + min(max_w, final_w), top + min(max_h, final_h)))
+        final_w, final_h = scaled.size
 
     # --- flatten onto white, grayscale, JPEG --------------------------------
     rgb = _flatten_white_rgb(scaled)
-    out = rgb.convert('L') if opts.grayscale else rgb
+    if opts.grayscale:
+        out = _apply_brighten(_to_grayscale(rgb, opts.grayscale_mode), opts.brighten)
+    else:
+        out = rgb
     buf = io.BytesIO()
     out.save(buf, 'JPEG', quality=int(opts.quality), optimize=True)
     jpeg = buf.getvalue()
@@ -238,7 +298,7 @@ def process_image(data, profile, opts, image_path=''):
     meta = {
         'orig_w': orig_w, 'orig_h': orig_h, 'orig_size': orig_size,
         'final_w': final_w, 'final_h': final_h, 'final_size': len(jpeg),
-        'cropped': cropped,
+        'cropped': cropped, 'rotated': rotated,
     }
     return jpeg, meta
 
@@ -583,10 +643,15 @@ def optimize_epub(in_path, out_path, profile, opts, log_fn=None):
         'elapsed': 0.0,
     }
 
-    log('INFO', '%s (%s) — target %s %dx%d, quality %d%%, grayscale %s, auto-crop %s' % (
-        summary['name'], _human(orig_size), profile['label'],
-        profile['width'], profile['height'], opts.quality,
-        'ON' if opts.grayscale else 'OFF', 'ON' if opts.auto_crop else 'OFF'))
+    log('INFO', '%s (%s) — target %s %dx%d, quality %d%%, grayscale %s (%s%s), '
+        'fill %s, enlarge %s, rotate-landscape %s, auto-crop %s' % (
+            summary['name'], _human(orig_size), profile['label'],
+            profile['width'], profile['height'], opts.quality,
+            'ON' if opts.grayscale else 'OFF', opts.grayscale_mode,
+            ('+%d%%' % opts.brighten) if opts.brighten else '',
+            opts.fill_mode, 'ON' if opts.enlarge else 'OFF',
+            'ON' if opts.rotate_landscape else 'OFF',
+            'ON' if opts.auto_crop else 'OFF'))
 
     zin = zipfile.ZipFile(in_path, 'r')
     try:

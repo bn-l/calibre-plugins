@@ -39,6 +39,12 @@ PREFS.defaults['optimize_auto_crop'] = False
 PREFS.defaults['optimize_quality'] = 85
 PREFS.defaults['optimize_split'] = True
 PREFS.defaults['device_target'] = 'auto'  # 'auto' | 'X4' | 'X3'
+# Image geometry + grayscale tuning (fork additions).
+PREFS.defaults['optimize_enlarge'] = True
+PREFS.defaults['optimize_rotate_landscape'] = True
+PREFS.defaults['optimize_fill_mode'] = 'fit'          # 'fit' | 'fill'
+PREFS.defaults['optimize_grayscale_mode'] = 'lightness'  # 'luma' | 'lightness'
+PREFS.defaults['optimize_brighten'] = 0               # extra gamma lift, 0..100
 
 
 class CrossPointConfigWidget(QWidget):
@@ -81,6 +87,17 @@ class CrossPointConfigWidget(QWidget):
         self.device_target.addItem('Auto-detect', 'auto')
         self.device_target.addItem('X4 (480×800)', 'X4')
         self.device_target.addItem('X3 (528×792)', 'X3')
+        self.optimize_enlarge = QCheckBox('Enlarge images to fill the screen (upscale small images)', self)
+        self.optimize_rotate_landscape = QCheckBox('Rotate landscape images to fill the portrait screen', self)
+        self.optimize_fill_mode = QComboBox(self)
+        self.optimize_fill_mode.addItem('Fit (whole image, may letterbox)', 'fit')
+        self.optimize_fill_mode.addItem('Fill (cover screen, centre-crop overflow)', 'fill')
+        self.optimize_grayscale_mode = QComboBox(self)
+        self.optimize_grayscale_mode.addItem('Lightness (brighter — best for colour covers)', 'lightness')
+        self.optimize_grayscale_mode.addItem('Luminance (ITU-R 601 — matches web UI)', 'luma')
+        self.optimize_brighten = QSpinBox(self)
+        self.optimize_brighten.setRange(0, 100)
+        self.optimize_brighten.setSuffix('%')
 
         self.host.setText(PREFS['host'])
         self.port.setValue(PREFS['port'])
@@ -102,6 +119,13 @@ class CrossPointConfigWidget(QWidget):
         self.optimize_quality.setValue(PREFS['optimize_quality'])
         idx = self.device_target.findData(PREFS['device_target'])
         self.device_target.setCurrentIndex(idx if idx >= 0 else 0)
+        self.optimize_enlarge.setChecked(PREFS['optimize_enlarge'])
+        self.optimize_rotate_landscape.setChecked(PREFS['optimize_rotate_landscape'])
+        idx_fill = self.optimize_fill_mode.findData(PREFS['optimize_fill_mode'])
+        self.optimize_fill_mode.setCurrentIndex(idx_fill if idx_fill >= 0 else 0)
+        idx_gs = self.optimize_grayscale_mode.findData(PREFS['optimize_grayscale_mode'])
+        self.optimize_grayscale_mode.setCurrentIndex(idx_gs if idx_gs >= 0 else 0)
+        self.optimize_brighten.setValue(PREFS['optimize_brighten'])
 
         layout.addRow('Host', self.host)
         layout.addRow('Port', self.port)
@@ -137,9 +161,9 @@ class CrossPointConfigWidget(QWidget):
 
         opt_heading = QLabel('<b>Optimizer</b>')
         layout.addRow(opt_heading)
-        opt_notice = QLabel('Mirrors the CrossPoint web optimizer: resizes images to the '
-                            'screen, converts to grayscale and re-encodes as JPEG, then '
-                            'rewrites the EPUB. A summary is shown after each transfer.')
+        opt_notice = QLabel('Resizes images to the screen (enlarging and rotating landscape '
+                            'images to fill it), converts to grayscale and re-encodes as JPEG, '
+                            'then rewrites the EPUB. A summary is shown after each transfer.')
         opt_notice.setWordWrap(True)
         opt_notice.setStyleSheet('color: gray; font-style: italic;')
         layout.addRow('', opt_notice)
@@ -147,7 +171,12 @@ class CrossPointConfigWidget(QWidget):
         layout.addRow('Device target', self.device_target)
         layout.addRow('JPEG quality', self.optimize_quality)
         layout.addRow('', self.optimize_grayscale)
+        layout.addRow('Grayscale method', self.optimize_grayscale_mode)
+        layout.addRow('Lighten', self.optimize_brighten)
         layout.addRow('', self.optimize_auto_crop)
+        layout.addRow('', self.optimize_enlarge)
+        layout.addRow('', self.optimize_rotate_landscape)
+        layout.addRow('Fill mode', self.optimize_fill_mode)
         layout.addRow('', self.optimize_split)
 
         self.optimize.toggled.connect(self._sync_optimizer_enabled)
@@ -185,10 +214,18 @@ class CrossPointConfigWidget(QWidget):
         PREFS['optimize_split'] = bool(self.optimize_split.isChecked())
         PREFS['optimize_quality'] = int(self.optimize_quality.value())
         PREFS['device_target'] = self.device_target.currentData()
+        PREFS['optimize_enlarge'] = bool(self.optimize_enlarge.isChecked())
+        PREFS['optimize_rotate_landscape'] = bool(self.optimize_rotate_landscape.isChecked())
+        PREFS['optimize_fill_mode'] = self.optimize_fill_mode.currentData()
+        PREFS['optimize_grayscale_mode'] = self.optimize_grayscale_mode.currentData()
+        PREFS['optimize_brighten'] = int(self.optimize_brighten.value())
 
     def _sync_optimizer_enabled(self, enabled):
         for w in (self.optimize_grayscale, self.optimize_auto_crop,
-                  self.optimize_split, self.optimize_quality, self.device_target):
+                  self.optimize_split, self.optimize_quality, self.device_target,
+                  self.optimize_enlarge, self.optimize_rotate_landscape,
+                  self.optimize_fill_mode, self.optimize_grayscale_mode,
+                  self.optimize_brighten):
             w.setEnabled(enabled)
 
     def _refresh_logs(self):

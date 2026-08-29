@@ -21,7 +21,7 @@ class CrossPointDevice(DeviceConfig, DevicePlugin):
     description = 'CrossPoint Reader wireless device'
     supported_platforms = ['windows', 'osx', 'linux']
     author = 'CrossPoint Reader'
-    version = (0, 2, 7)
+    version = (0, 3, 0)
 
     # Invalid USB vendor info to avoid USB scans matching.
     VENDOR_ID = [0xFFFF]
@@ -569,6 +569,11 @@ class CrossPointDevice(DeviceConfig, DevicePlugin):
             grayscale=PREFS['optimize_grayscale'],
             auto_crop=PREFS['optimize_auto_crop'],
             split_text=PREFS['optimize_split'],
+            enlarge=PREFS['optimize_enlarge'],
+            rotate_landscape=PREFS['optimize_rotate_landscape'],
+            fill_mode=PREFS['optimize_fill_mode'],
+            grayscale_mode=PREFS['optimize_grayscale_mode'],
+            brighten=PREFS['optimize_brighten'],
         )
 
         def _step(tag, message):
