@@ -41,7 +41,7 @@ PREFS.defaults['optimize_split'] = True
 PREFS.defaults['device_target'] = 'auto'  # 'auto' | 'X4' | 'X3'
 # Image geometry + grayscale tuning (fork additions).
 PREFS.defaults['optimize_enlarge'] = True
-PREFS.defaults['optimize_rotate_landscape'] = True
+PREFS.defaults['optimize_rotate_landscape'] = False   # opt-in: rotates wide figures sideways
 PREFS.defaults['optimize_fill_mode'] = 'fit'          # 'fit' | 'fill'
 PREFS.defaults['optimize_grayscale_mode'] = 'lightness'  # 'luma' | 'lightness'
 PREFS.defaults['optimize_brighten'] = 0               # extra gamma lift, 0..100
@@ -87,8 +87,8 @@ class CrossPointConfigWidget(QWidget):
         self.device_target.addItem('Auto-detect', 'auto')
         self.device_target.addItem('X4 (480×800)', 'X4')
         self.device_target.addItem('X3 (528×792)', 'X3')
-        self.optimize_enlarge = QCheckBox('Enlarge images to fill the screen (upscale small images)', self)
-        self.optimize_rotate_landscape = QCheckBox('Rotate landscape images to fill the portrait screen', self)
+        self.optimize_enlarge = QCheckBox('Enlarge block figures to fill the page (inline glyphs left as-is)', self)
+        self.optimize_rotate_landscape = QCheckBox('Rotate wide figures sideways to fill the page (off = keep upright)', self)
         self.optimize_fill_mode = QComboBox(self)
         self.optimize_fill_mode.addItem('Fit (whole image, may letterbox)', 'fit')
         self.optimize_fill_mode.addItem('Fill (cover screen, centre-crop overflow)', 'fill')

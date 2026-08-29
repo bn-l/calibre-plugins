@@ -54,6 +54,17 @@ MIN_CROP_SAVINGS_RATIO = 0.08
 MIN_COLOR_CROP_SAVINGS_RATIO = 0.20
 MIN_CROP_DIMENSION = 240
 
+# Only enlarge/rotate genuine block figures: images whose *shorter* side is at
+# least this many pixels. Smaller images (inline glyphs, math symbols, thin
+# rules, drop caps) are left at native size — upscaling them to the panel breaks
+# inline layout (a 12px symbol becomes a full page), and rotating them is
+# meaningless.
+INLINE_MIN_DIM = 96
+# Reserve headroom below the full panel so a scaled figure still fits the
+# reader's drawable page (status bar + top/bottom margins) rather than claiming
+# the whole panel height, overflowing the page, and being dropped (blank box).
+CONTENT_HEIGHT_FRACTION = 0.90
+
 RASTER_RE = re.compile(r'\.(png|gif|webp|bmp|jpe?g)$', re.IGNORECASE)
 # Anchored: rename a whole path/filename or an isolated attribute value.
 RENAME_RE = re.compile(r'\.(png|gif|webp|bmp|jpeg)$', re.IGNORECASE)
@@ -259,18 +270,28 @@ def process_image(data, profile, opts, image_path=''):
             src_w, src_h = src.size
             cropped = True
 
-    # --- optional rotate landscape to match the portrait screen -------------
+    # Only block-level figures are enlarged/rotated; inline images (glyphs,
+    # symbols, thin rules) pass through untouched so layout is never broken.
+    is_block = min(src_w, src_h) >= INLINE_MIN_DIM
+    # Fit within the drawable page, not the full panel, so figures don't
+    # overflow the reader's content area and get dropped.
+    box_w = max_w
+    box_h = max(1, int(round(max_h * CONTENT_HEIGHT_FRACTION)))
+
+    # --- optional rotate: only large landscape figures, never inline images --
     rotated = False
-    if opts.rotate_landscape and src_w > src_h and max_w < max_h:
+    if opts.rotate_landscape and is_block and src_w > src_h and box_w < box_h:
         src = src.rotate(90, expand=True)
         src_w, src_h = src.size
         rotated = True
 
-    # --- scale: 'fit' = contain, 'fill' = cover; optional upscaling ---------
-    scale_fit = min(max_w / float(src_w), max_h / float(src_h))
-    scale = max(max_w / float(src_w), max_h / float(src_h)) if opts.fill_mode == 'fill' else scale_fit
-    if not opts.enlarge:
-        scale = min(scale, 1.0)  # never grow, only shrink oversized images
+    # --- scale: 'fit' = contain, 'fill' = cover; upscale only block figures --
+    if opts.fill_mode == 'fill':
+        scale = max(box_w / float(src_w), box_h / float(src_h))
+    else:
+        scale = min(box_w / float(src_w), box_h / float(src_h))
+    if not (opts.enlarge and is_block):
+        scale = min(scale, 1.0)  # inline images / enlarge off: shrink-only, never grow
     final_w = max(1, int(round(src_w * scale)))
     final_h = max(1, int(round(src_h * scale)))
     if (final_w, final_h) == (src_w, src_h):
@@ -278,11 +299,11 @@ def process_image(data, profile, opts, image_path=''):
     else:
         scaled = src.resize((final_w, final_h), Image.LANCZOS)
 
-    # --- fill mode: centre-crop the overflow to the exact screen box --------
-    if opts.fill_mode == 'fill' and (final_w > max_w or final_h > max_h):
-        left = max(0, (final_w - max_w) // 2)
-        top = max(0, (final_h - max_h) // 2)
-        scaled = scaled.crop((left, top, left + min(max_w, final_w), top + min(max_h, final_h)))
+    # --- fill mode: centre-crop the overflow to the content box --------------
+    if opts.fill_mode == 'fill' and (final_w > box_w or final_h > box_h):
+        left = max(0, (final_w - box_w) // 2)
+        top = max(0, (final_h - box_h) // 2)
+        scaled = scaled.crop((left, top, left + min(box_w, final_w), top + min(box_h, final_h)))
         final_w, final_h = scaled.size
 
     # --- flatten onto white, grayscale, JPEG --------------------------------
