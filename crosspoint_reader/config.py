@@ -27,6 +27,7 @@ PREFS.defaults['chunk_size'] = 2048
 PREFS.defaults['debug'] = False
 PREFS.defaults['fetch_metadata'] = False
 PREFS.defaults['send_to_root'] = False
+PREFS.defaults['overwrite_existing'] = False
 PREFS.defaults['upload_template'] = ''
 PREFS.defaults['upload_retries'] = 3
 PREFS.defaults['retry_delay'] = 2
@@ -67,6 +68,7 @@ class CrossPointConfigWidget(QWidget):
         self.debug = QCheckBox('Enable debug logging', self)
         self.fetch_metadata = QCheckBox('Fetch metadata for side-loaded books (downloads each once on connect)', self)
         self.send_to_root = QCheckBox('Send to root (ignore any template)', self)
+        self.overwrite_existing = QCheckBox('Overwrite file if it already exists on the device', self)
 
         # Optimizer controls.
         self.optimize = QCheckBox('Optimize EPUBs before transfer', self)
@@ -95,6 +97,7 @@ class CrossPointConfigWidget(QWidget):
         self.debug.setChecked(PREFS['debug'])
         self.fetch_metadata.setChecked(PREFS['fetch_metadata'])
         self.send_to_root.setChecked(PREFS['send_to_root'])
+        self.overwrite_existing.setChecked(PREFS['overwrite_existing'])
         self.optimize.setChecked(PREFS['optimize'])
         self.optimize_grayscale.setChecked(PREFS['optimize_grayscale'])
         self.optimize_auto_crop.setChecked(PREFS['optimize_auto_crop'])
@@ -129,6 +132,7 @@ class CrossPointConfigWidget(QWidget):
         layout.addRow('', self.debug)
         layout.addRow('', self.fetch_metadata)
         layout.addRow('', self.send_to_root)
+        layout.addRow('', self.overwrite_existing)
 
         sep = QFrame(self)
         sep.setFrameShape(QFrame.Shape.HLine)
@@ -179,6 +183,7 @@ class CrossPointConfigWidget(QWidget):
         PREFS['debug'] = bool(self.debug.isChecked())
         PREFS['fetch_metadata'] = bool(self.fetch_metadata.isChecked())
         PREFS['send_to_root'] = bool(self.send_to_root.isChecked())
+        PREFS['overwrite_existing'] = bool(self.overwrite_existing.isChecked())
         PREFS['optimize'] = bool(self.optimize.isChecked())
         PREFS['optimize_grayscale'] = bool(self.optimize_grayscale.isChecked())
         PREFS['optimize_auto_crop'] = bool(self.optimize_auto_crop.isChecked())

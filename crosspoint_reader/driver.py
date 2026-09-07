@@ -21,7 +21,7 @@ class CrossPointDevice(DeviceConfig, DevicePlugin):
     description = 'CrossPoint Reader wireless device'
     supported_platforms = ['windows', 'osx', 'linux']
     author = 'CrossPoint Reader'
-    version = (0, 2, 9)
+    version = (0, 2, 7)
 
     # Invalid USB vendor info to avoid USB scans matching.
     VENDOR_ID = [0xFFFF]
@@ -480,12 +480,17 @@ class CrossPointDevice(DeviceConfig, DevicePlugin):
             else:
                 lpath = target_dir + '/' + filename
 
-            # Always overwrite: if a file with this name is already on the
-            # device, delete it first. The firmware rejects an upload over an
-            # existing file, so without this a re-send would error out and
-            # abort the whole batch instead of replacing the book.
+            # Handle a file that is already on the device. The firmware rejects
+            # an upload over an existing file, so re-sending it would otherwise
+            # error out and abort the whole batch. By default we just skip the
+            # transfer and record it so it stays marked on-device; when the user
+            # opts into overwriting, we delete the old copy first and re-upload.
             existing_size = self._file_exists_on_device(filename, target_dir)
             if existing_size is not None:
+                if not PREFS['overwrite_existing']:
+                    self._log(f'[CrossPoint] {filename} already on device; skipping')
+                    paths.append((lpath, existing_size))
+                    continue
                 self._log(f'[CrossPoint] {filename} already on device; overwriting')
                 try:
                     self._delete_paths_on_device([lpath])
