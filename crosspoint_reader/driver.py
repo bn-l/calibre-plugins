@@ -338,6 +338,21 @@ class CrossPointDevice(DeviceConfig, DevicePlugin):
                 return True
         return False
 
+    def _file_exists_on_device(self, filename, path):
+        """Return the on-device size of `filename` inside `path`, or None.
+
+        Used to detect a duplicate before uploading so the old copy can be
+        overwritten (the firmware refuses to overwrite an existing file).
+        """
+        try:
+            entries = self._http_get_json('/api/files', params={'path': path})
+        except Exception:
+            return None
+        for entry in entries:
+            if not entry.get('isDirectory') and entry.get('name') == filename:
+                return entry.get('size', 0)
+        return None
+
     def _mkdir_on_device(self, name, path):
         """Create a directory on device via POST /mkdir.
 
@@ -465,6 +480,23 @@ class CrossPointDevice(DeviceConfig, DevicePlugin):
             else:
                 lpath = target_dir + '/' + filename
 
+            # Handle a file that is already on the device. The firmware rejects
+            # an upload over an existing file, so re-sending it would otherwise
+            # error out and abort the whole batch. By default we just skip the
+            # transfer and record it so it stays marked on-device; when the user
+            # opts into overwriting, we delete the old copy first and re-upload.
+            existing_size = self._file_exists_on_device(filename, target_dir)
+            if existing_size is not None:
+                if not PREFS['overwrite_existing']:
+                    self._log(f'[CrossPoint] {filename} already on device; skipping')
+                    paths.append((lpath, existing_size))
+                    continue
+                self._log(f'[CrossPoint] {filename} already on device; overwriting')
+                try:
+                    self._delete_paths_on_device([lpath])
+                except Exception as exc:
+                    self._log(f'[CrossPoint] pre-overwrite delete failed for {lpath}: {exc}')
+
             # Optionally optimize the EPUB to a temp file before uploading.
             send_path = filepath
             opt_temp = None
@@ -529,9 +561,20 @@ class CrossPointDevice(DeviceConfig, DevicePlugin):
                             time.sleep(retry_delay)
 
                 if last_error is not None:
-                    raise ControlError(desc=f'Upload failed for {filename} after '
-                                      f'{max_attempts} attempt(s): {last_error}')
-                paths.append((lpath, os.path.getsize(send_path)))
+                    # A duplicate rejection (the pre-overwrite delete didn't
+                    # take effect, or a race left the file present) should not
+                    # abort the batch: record the file so it is still marked
+                    # on-device and move on to the next book.
+                    if 'exist' in str(last_error).lower():
+                        self._log(f'[CrossPoint] {filename} already on device; '
+                                  f'recording without re-upload')
+                        paths.append((lpath, existing_size if existing_size is not None
+                                      else os.path.getsize(send_path)))
+                    else:
+                        raise ControlError(desc=f'Upload failed for {filename} after '
+                                          f'{max_attempts} attempt(s): {last_error}')
+                else:
+                    paths.append((lpath, os.path.getsize(send_path)))
                 if book_cooldown > 0 and i + 1 < total:
                     time.sleep(book_cooldown)
             finally:
@@ -613,6 +656,10 @@ class CrossPointDevice(DeviceConfig, DevicePlugin):
             lpath = location[0]
             length = location[1]
             book = Book('', lpath, size=length, other=info)
+            # Carry the library uuid so Calibre marks the book on-device
+            # immediately (matching books(), which sets it explicitly).
+            if getattr(info, 'uuid', None):
+                book.uuid = info.uuid
             if booklists:
                 booklists[0].add_book(book, replace_metadata=True)
                 self._log(f'[CrossPoint] added to booklist: {lpath}')
